@@ -11,12 +11,13 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 # ==========================================
 # কনফিগারেশন
 # ==========================================
-BOT_TOKEN = "8989549178:AAHDUjxx7NLpRYbL1Af-4UXpz4oX45F-ZE8"
-ADMIN_ID = 6891217464
-BOT_USERNAME = "@premium94_bot"
+BOT_TOKEN = "8844166711:AAFYRraiOHzbGJrrCWhUggmV8egW4p1n980"
+ADMIN_ID = 8583812180
+BOT_USERNAME = "@premium12_bot"
 RENDER_URL = "https://my-2-d05t.onrender.com"
-WEB_APP_URL = "https://desi-hubpremium.vercel.app/"
+WEB_APP_URL = "https://premiumxyz.dpdns.org/"
 DB_FILE = "videos.json"
+ADMIN_LINK = "https://t.me/premium12_bot/admin"  # 👈 আপনার কাঙ্ক্ষিত লিংক
 
 HEADER_TEXT = "🎬 আপনার ভিডিওগুলো এখানে"
 
@@ -54,9 +55,8 @@ def get_video(vid):
 # ==========================================
 application = Application.builder().token(BOT_TOKEN).updater(None).build()
 
-# Album collect করার জন্য buffer
-album_buffer = {}       # media_group_id -> {"media": [...], "chat_id": ..., "title": ...}
-album_tasks = {}        # media_group_id -> asyncio.Task
+# অ্যাডমিনের ব্যাচ প্রসেস করার জন্য বাফার
+admin_batches = {}  # user_id -> {"media": [...], "title": "...", "task": asyncio.Task}
 
 # ==========================================
 # ১৫ মিনিট পর delete
@@ -71,35 +71,38 @@ async def delete_after_delay(chat_id, message_ids, context):
     print(f"✅ Deleted {len(message_ids)} messages from chat {chat_id}")
 
 # ==========================================
-# Album process (10 সেকেন্ড অপেক্ষা করে সব media collect করে)
+# অ্যাডমিনের মিডিয়া ব্যাচ প্রসেস (১০টার বেশি মিডিয়া এক লিংকে)
 # ==========================================
-async def process_album(media_group_id, context):
-    await asyncio.sleep(3)  # সব media আসার জন্য অপেক্ষা
+async def wait_and_process_batch(user_id, context, chat_id):
+    try:
+        # ৫ সেকেন্ড অপেক্ষা করো। এর মধ্যে নতুন মিডিয়া আসলে এই টাস্ক বাতিল হবে।
+        await asyncio.sleep(5)
+        
+        batch_data = admin_batches.pop(user_id, None)
+        if not batch_data or not batch_data["media"]:
+            return
 
-    data = album_buffer.pop(media_group_id, None)
-    album_tasks.pop(media_group_id, None)
+        media_list = batch_data["media"]
+        title = batch_data["title"]
 
-    if not data or not data["media"]:
-        return
+        # একটাই লিংক তৈরি করো
+        short_id = add_album(media_list, title)
+        final_link = f"https://t.me/{BOT_USERNAME}?start={short_id}"
 
-    chat_id = data["chat_id"]
-    title = data["title"]
-    media_list = data["media"]
-
-    # Short ID save করো
-    short_id = add_album(media_list, title)
-    final_link = f"https://t.me/{BOT_USERNAME}?start={short_id}"
-
-    count = len(media_list)
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"✅ **{count}টি মিডিয়া সেভ হয়েছে!**\n\n"
-             f"🆔 **Short ID:** `{short_id}`\n"
-             f"📝 **Title:** {title}\n\n"
-             f"🔗 **Download লিংক (ওয়েবে বসাও):**\n"
-             f"`{final_link}`",
-        parse_mode="Markdown"
-    )
+        count = len(media_list)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ **{count}টি মিডিয়া সেভ হয়েছে!**\n\n"
+                 f"🆔 **Short ID:** `{short_id}`\n"
+                 f"📝 **Title:** {title}\n\n"
+                 f"🔗 **Download লিংক:**\n"
+                 f"`{final_link}`",
+            parse_mode="Markdown"
+        )
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        print(f"Batch process error: {e}")
 
 # ==========================================
 # /start — User কে media পাঠায়
@@ -108,12 +111,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     args = context.args
 
+    # ===== args নেই মানে শুধু /start বাটন চাপা হয়েছে =====
     if not args:
-        await update.message.reply_text(
-            "👋 হ্যালো! ভিডিও ডাউনলোড করতে আমাদের ওয়েবসাইটের Download বাটনে ক্লিক করুন।"
+        # ১. Inline keyboard তৈরি — "Open Video 🔞" বাটন সরাসরি লিংকে যাবে
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    text="Open Video 🔞",
+                    url=ADMIN_LINK
+                )
+            ]
+        ])
+
+        # ২. আপনার দেওয়া হুবহু লেখা
+        caption_text = (
+            "✨ Welcome to  𝖯𝖱𝖤𝖬𝖨𝖴𝖬 HUB ✨\n"
+            "🔥 Get Exclusive Videos & the Latest Trending Content — FREE!\n"
+            "🎬 প্রতিদিন নতুন নতুন এক্সক্লুসিভ ভিডিও ও ট্রেন্ডিং কনটেন্ট উপভোগ করুন একদম ফ্রি!\n"
+            "📢 নিয়মিত আপডেট, নতুন ভিডিও এবং সাপোর্ট পেতে আমাদের অফিসিয়াল চ্যানেলে যুক্ত থাকুন:\n"
+            "https://t.me/+x3NVMZYXWZo2YzM1\n"
+            "✅ Click the button below to watch the video!\n"
+            "👇👇👇👇👇👇👇👇👇👇👇"
         )
+
+        # ৩. ছবি + ক্যাপশন + বাটন পাঠানো
+        try:
+            await context.bot.send_photo(
+                chat_id=chat_id,
+                photo="YOUR_PHOTO_FILE_ID_OR_URL",  # 👈 এখানে ছবির File ID বা URL বসান
+                caption=caption_text,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            print(f"Welcome photo error: {e}")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=caption_text,
+                reply_markup=keyboard
+            )
         return
 
+    # ===== args আছে (রেফারেল লিংক) ==========
     video = get_video(args[0])
     if not video:
         await update.message.reply_text("❌ দুঃখিত! ভিডিওটি পাওয়া যায়নি।")
@@ -126,7 +164,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sent_ids = []
 
-    # একটা একটা করে পাঠাও
     for item in media_list:
         try:
             if item["type"] == "video":
@@ -134,13 +171,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 m = await context.bot.send_photo(chat_id=chat_id, photo=item["file_id"])
             sent_ids.append(m.message_id)
-            await asyncio.sleep(0.5)   # spam এড়াতে
+            await asyncio.sleep(0.5)
         except Exception as e:
             print(f"Send error: {e}")
 
-    # শেষে final message + button
+    # 👇 ভিডিও পাঠানোর পর নিচের বাটন (t.me/premium12_bot/admin লিংক যুক্ত)
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔗 আরো দেখুন", url=WEB_APP_URL)]
+        [InlineKeyboardButton("🎬 আরো ভিডিও দেখুন", url=ADMIN_LINK)]
     ])
 
     final_text = (
@@ -160,11 +197,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Final message error: {e}")
 
-    # ১৫ মিনিট পর সব delete
     asyncio.create_task(delete_after_delay(chat_id, sent_ids, context))
 
 # ==========================================
-# Admin media handler (album + single)
+# Admin media handler (album + single + unlimited batch)
 # ==========================================
 async def catch_everything(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
@@ -187,7 +223,7 @@ async def catch_everything(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = message.video.file_id
         media_type = "video"
     elif message.photo:
-        file_id = message.photo[-1].file_id   # সবচেয়ে বড় resolution
+        file_id = message.photo[-1].file_id
         media_type = "photo"
     elif message.document and message.document.mime_type and message.document.mime_type.startswith('video/'):
         file_id = message.document.file_id
@@ -235,44 +271,34 @@ async def catch_everything(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not file_id:
         return
 
-    # ===== Album (media_group_id থাকলে) =====
-    if message.media_group_id:
-        mgid = message.media_group_id
+    user_id = update.effective_user.id
+    chat_id = message.chat_id
 
-        if mgid not in album_buffer:
-            album_buffer[mgid] = {
-                "media": [],
-                "chat_id": message.chat_id,
-                "title": message.caption or f"Album"
-            }
+    # ===== নতুন ব্যাচ সিস্টেম (১০টার বেশি মিডিয়া এক লিংকে) =====
+    if user_id not in admin_batches:
+        admin_batches[user_id] = {
+            "media": [],
+            "title": message.caption or "Batch Upload",
+            "task": None
+        }
 
-        album_buffer[mgid]["media"].append({
-            "file_id": file_id,
-            "type": media_type
-        })
+    # মিডিয়া যোগ করো
+    admin_batches[user_id]["media"].append({
+        "file_id": file_id,
+        "type": media_type
+    })
 
-        # যদি caption থাকে, সেটাকে title বানাও
-        if message.caption:
-            album_buffer[mgid]["title"] = message.caption
+    # ক্যাপশন থাকলে টাইটেল আপডেট করো
+    if message.caption:
+        admin_batches[user_id]["title"] = message.caption
 
-        # প্রথম media আসার পর একটা task চালু করো
-        if mgid not in album_tasks:
-            task = asyncio.create_task(process_album(mgid, context))
-            album_tasks[mgid] = task
+    # আগের টাইমার টাস্ক বাতিল করো (কারণ নতুন মিডিয়া এসেছে)
+    if admin_batches[user_id]["task"]:
+        admin_batches[user_id]["task"].cancel()
 
-        return
-
-    # ===== Single media =====
-    short_id = add_album([{"file_id": file_id, "type": media_type}],
-                         message.caption or f"Video {load_db()['next_id']}")
-    final_link = f"https://t.me/{BOT_USERNAME}?start={short_id}"
-
-    await message.reply_text(
-        text=f"✅ **মিডিয়া সেভ হয়েছে!**\n\n"
-             f"🆔 **Short ID:** `{short_id}`\n"
-             f"🔗 **Download লিংক:**\n"
-             f"`{final_link}`",
-        parse_mode="Markdown"
+    # নতুন ৫ সেকেন্ডের টাইমার চালু করো
+    admin_batches[user_id]["task"] = asyncio.create_task(
+        wait_and_process_batch(user_id, context, chat_id)
     )
 
 # ==========================================
